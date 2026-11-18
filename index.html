@@ -52,6 +52,7 @@
   .btn{width:100%;padding:.9rem;border:none;border-radius:8px;font-family:"Noto Serif JP",serif;font-size:1rem;cursor:pointer;transition:all .2s;font-weight:700;}
   .btn-primary{background:var(--accent);color:var(--bg);}
   .btn-primary:hover{opacity:.9;transform:translateY(-1px);}
+  .btn:disabled{opacity:.4;cursor:default;}
   .btn-secondary{background:transparent;border:1px solid var(--border);color:var(--muted);margin-top:.7rem;}
   .btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
   .result-panel{display:none;margin-bottom:1rem;}
@@ -158,6 +159,7 @@
       <button class="filter-btn" onclick="filterMistakes(3,this)">★★★ 難しい</button>
     </div>
     <div id="mistakes-list" class="mistakes-list"></div>
+    <button class="btn btn-secondary" id="clear-mistakes" onclick="clearMistakes()">記録を消す</button>
   </div>
 </main>
 
@@ -2006,7 +2008,36 @@ const diffInfo={
 
 let shuffled=[],currentIdx=0,answered=false,correctCount=0,totalAnswered=0,mistakes={},mistakeFilter=0,currentMode="all";
 
-function shuffle(arr){return[...arr].sort(()=>Math.random()-0.5);}
+// Fisher–Yates。sort(() => Math.random() - 0.5) は並びに偏りが出るため使わない
+function shuffle(arr){
+  const a=[...arr];
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+
+// 間違えた単語の記録は、このブラウザの localStorage に { 英単語: 間違えた回数 } の形で保存する
+const STORAGE_KEY="vocab-quiz-mistakes";
+function loadMistakes(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}");
+    const byEn=new Map(ALL_WORDS.map(w=>[w.en,w]));
+    for(const [en,count] of Object.entries(saved)){
+      if(byEn.has(en)&&count>0)mistakes[en]={word:byEn.get(en),count};
+    }
+  }catch(e){}
+}
+function saveMistakes(){
+  try{
+    const data={};
+    for(const [en,m] of Object.entries(mistakes))data[en]=m.count;
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
+  }catch(e){}
+}
+function clearMistakes(){
+  if(Object.keys(mistakes).length===0||!confirm("間違えた単語の記録をすべて消しますか？"))return;
+  mistakes={};saveMistakes();renderMistakes();
+  if(currentMode==="mistakes")init();
+}
 
 function getWordPool(){
   if(currentMode==="all")return ALL_WORDS;
@@ -2026,6 +2057,10 @@ function init(){
   const pool=getWordPool();
   if(pool.length===0){
     document.getElementById("question-card").innerHTML='<div style="text-align:center;padding:3rem;color:var(--muted)">単語がありません</div>';
+    document.getElementById("result-panel").classList.remove("show");
+    document.getElementById("progress-fill").style.width="0%";
+    document.getElementById("action-btn").disabled=true;
+    document.getElementById("skip-btn").style.display="none";
     return;
   }
   shuffled=shuffle(pool);currentIdx=0;answered=false;
@@ -2037,7 +2072,7 @@ function restoreCard(){
   const card=document.getElementById("question-card");
   if(!document.getElementById("q-number")){
     card.innerHTML='<div class="q-number" id="q-number"></div><div class="q-text" id="q-text"></div><div class="q-hint">英語でスペルを入力してください &nbsp;|&nbsp; <span id="q-wordcount"></span></div><input type="text" class="answer-input" id="answer-input" placeholder="英単語を入力..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">';
-    document.getElementById("answer-input").addEventListener("keydown",e=>{if(e.key==="Enter")handleAction();});
+    document.getElementById("answer-input").addEventListener("keydown",onAnswerKeydown);
   }
 }
 
@@ -2053,11 +2088,15 @@ function loadQuestion(){
   inp.value="";inp.className="answer-input";inp.disabled=false;
   document.getElementById("result-panel").classList.remove("show");
   document.getElementById("action-btn").textContent="解答する";
+  document.getElementById("action-btn").disabled=false;
   document.getElementById("skip-btn").style.display="";
   answered=false;inp.focus();
 }
 
 function handleAction(){if(!answered)checkAnswer();else nextQuestion();}
+// 解答欄の Enter で解答する。preventDefault しないと、解答後にフォーカスを移したボタンにも
+// 同じ Enter が届き、結果を見る前に次の問題へ進んでしまう
+function onAnswerKeydown(e){if(e.key==="Enter"){e.preventDefault();handleAction();}}
 
 function checkAnswer(){
   const w=shuffled[currentIdx];
@@ -2066,7 +2105,7 @@ function checkAnswer(){
   const isCorrect=input===correct;
   answered=true;totalAnswered++;
   if(isCorrect)correctCount++;
-  else{if(!mistakes[w.en])mistakes[w.en]={word:w,count:0};mistakes[w.en].count++;}
+  else{if(!mistakes[w.en])mistakes[w.en]={word:w,count:0};mistakes[w.en].count++;saveMistakes();}
   updateStats();
   const inp=document.getElementById("answer-input");
   inp.disabled=true;inp.className="answer-input "+(isCorrect?"correct":"wrong");
@@ -2081,7 +2120,9 @@ function checkAnswer(){
   badge.textContent=d.label;badge.className="diff-badge "+d.cls;
   document.getElementById("diff-stars").textContent=d.stars;
   document.getElementById("result-panel").classList.add("show");
-  document.getElementById("action-btn").textContent="次の問題へ →";
+  const actionBtn=document.getElementById("action-btn");
+  actionBtn.textContent="次の問題へ →";
+  actionBtn.focus();
 }
 
 function nextQuestion(){currentIdx++;loadQuestion();}
@@ -2098,7 +2139,7 @@ function showComplete(){
   document.getElementById("question-card").innerHTML='<div class="complete-card"><div style="font-size:.8rem;color:var(--muted);letter-spacing:.15em;margin-bottom:1rem">全問完了！</div><div class="complete-score">'+rate+'%</div><div class="complete-label">'+correctCount+' / '+totalAnswered+' 問正解</div><div style="color:var(--muted);font-size:.85rem;margin-bottom:2rem">'+( rate>=80?"素晴らしい！合格ライン突破！":rate>=60?"もう少しで合格ライン！":"間違えた単語を復習しましょう。")+'</div></div>';
   document.getElementById("result-panel").classList.remove("show");
   document.getElementById("action-btn").textContent="もう一度挑戦する";
-  document.getElementById("action-btn").onclick=()=>{document.getElementById("action-btn").onclick=handleAction;restoreCard();document.getElementById("answer-input").addEventListener("keydown",e=>{if(e.key==="Enter")handleAction();});correctCount=0;totalAnswered=0;updateStats();init();};
+  document.getElementById("action-btn").onclick=()=>{document.getElementById("action-btn").onclick=handleAction;restoreCard();correctCount=0;totalAnswered=0;updateStats();init();};
   document.getElementById("skip-btn").style.display="none";
 }
 
@@ -2119,6 +2160,7 @@ function renderMistakes(){
   const list=document.getElementById("mistakes-list");
   let keys=Object.keys(mistakes);
   if(mistakeFilter>0)keys=keys.filter(k=>mistakes[k].word.diff===mistakeFilter);
+  document.getElementById("clear-mistakes").style.display=Object.keys(mistakes).length?"":"none";
   if(keys.length===0){list.innerHTML='<div class="empty-state">まだ間違えた単語はありません。<br>テストを進めると、ここに表示されます。</div>';return;}
   keys.sort((a,b)=>mistakes[b].count-mistakes[a].count);
   list.innerHTML=keys.map(k=>{
@@ -2127,7 +2169,8 @@ function renderMistakes(){
   }).join("");
 }
 
-document.getElementById("answer-input").addEventListener("keydown",e=>{if(e.key==="Enter")handleAction();});
+document.getElementById("answer-input").addEventListener("keydown",onAnswerKeydown);
+loadMistakes();
 init();
 </script>
 </body>
