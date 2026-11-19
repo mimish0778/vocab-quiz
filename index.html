@@ -2054,6 +2054,8 @@ function setMode(mode,btn){
 }
 
 function init(){
+  // 完了画面で「もう一度挑戦する」用に差し替えたハンドラを戻す（完了後に出題範囲を切り替えた場合）
+  document.getElementById("action-btn").onclick=handleAction;
   const pool=getWordPool();
   if(pool.length===0){
     document.getElementById("question-card").innerHTML='<div style="text-align:center;padding:3rem;color:var(--muted)">単語がありません</div>';
